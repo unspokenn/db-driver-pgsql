@@ -1,0 +1,45 @@
+{
+    "name": "unspokenn/db-driver-pgsql",
+    "version": "1.0.0",
+    "description": "The tenancy/tenancy database driver for Pgsql",
+    "keywords": ["database", "tenancy", "postgresql", "pgsql"],
+    "license": "MIT",
+    "require": {
+        "tenancy/framework": "*",
+        "tenancy/hooks-database": "*",
+        "tenancy/affects-connections": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "Tenancy\\Database\\Drivers\\Pgsql\\": ""
+        }
+    },
+    "funding": [
+        {
+            "type": "opencollective",
+            "url": "https://opencollective.com/tenancy"
+        },
+        {
+            "type": "github",
+            "url": "https://github.com/sponsors/tenancy"
+        }
+    ],
+    "authors": [
+        {
+            "name": "Arlon Antonius",
+            "email": "opensource@arlon.dev",
+            "homepage": "https://arlon.dev"
+        },
+        {
+            "name": "Sadık Ergüven",
+            "email": "sadikerguven@gmail.com"
+        }
+    ],
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Tenancy\\Database\\Drivers\\Pgsql\\Provider"
+            ]
+        }
+    }
+}
