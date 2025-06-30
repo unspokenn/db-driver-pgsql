@@ -16,18 +16,30 @@ declare(strict_types=1);
 
 namespace Tenancy\Database\Drivers\Pgsql\Driver;
 
+use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Database\ConnectionInterface;
-use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\DB;
 use Tenancy\Affects\Connections\Contracts\ResolvesConnections;
 use Tenancy\Database\Drivers\Pgsql\Concerns\ManagesSystemConnection;
 use Tenancy\Facades\Tenancy;
 use Tenancy\Hooks\Database\Contracts\ProvidesDatabase;
 use Tenancy\Hooks\Database\Events\Drivers as Events;
+use Tenancy\Hooks\Database\Support\QueryManager;
 use Tenancy\Identification\Contracts\Tenant;
 
 class Pgsql implements ProvidesDatabase
 {
+    protected QueryManager $queryManager;
+
+    /**
+     * @throws BindingResolutionException
+     */
+    public function __construct()
+    {
+        $this->queryManager = App::make(QueryManager::class);
+    }
+
     public function configure(Tenant $tenant): array
     {
         $config = [];
@@ -43,11 +55,17 @@ class Pgsql implements ProvidesDatabase
 
         event(new Events\Creating($tenant, $config, $this));
 
-        return $this->processAndDispatch(Events\Created::class, $tenant, [
-            'user'     => "CREATE ROLE IF NOT EXISTS \"{$config['username']}\" WITH LOGIN PASSWORD '{$config['password']}'",
-            'database' => "CREATE DATABASE \"{$config['database']}\" OWNER \"{$config['username']}\"",
-            'grant'    => "GRANT ALL PRIVILEGES ON DATABASE \"{$config['database']}\" TO \"{$config['username']}\"",
-        ]);
+        $result = $this->queryManager->setConnection($this->system($tenant))
+            ->process(function () use ($config) {
+                $this->statement("CREATE ROLE IF NOT EXISTS \"{$config['username']}\" WITH LOGIN PASSWORD '{$config['password']}'");
+                $this->statement("CREATE DATABASE \"{$config['database']}\" OWNER \"{$config['username']}\"");
+                $this->statement("GRANT ALL PRIVILEGES ON DATABASE \"{$config['database']}\" TO \"{$config['username']}\"");
+            })
+            ->getStatus();
+
+        event(new Events\Created($tenant, $this, $result));
+
+        return $result;
     }
 
     public function update(Tenant $tenant): bool
@@ -60,23 +78,27 @@ class Pgsql implements ProvidesDatabase
             return false;
         }
 
-        $tableStatements = [];
+        $tables = $this->retrieveTables($tenant);
 
-        foreach ($this->retrieveTables($tenant) as $table) {
-            $tableStatements['move-table-'.$table] = "ALTER TABLE \"{$config['oldUsername']}\".\"{$table}\" SET SCHEMA \"{$config['database']}\"";
-        }
+        $result = $this->queryManager->setConnection($this->system($tenant))
+            ->process(function () use ($config, $tables) {
+                $this->statement("ALTER ROLE \"{$config['oldUsername']}\" RENAME TO \"{$config['username']}\"");
+                $this->statement("ALTER ROLE \"{$config['username']}\" WITH PASSWORD '{$config['password']}'");
+                $this->statement("CREATE DATABASE \"{$config['database']}\" OWNER \"{$config['username']}\"");
+                $this->statement("GRANT ALL PRIVILEGES ON DATABASE \"{$config['database']}\" TO \"{$config['username']}\"");
 
-        $statements = array_merge([
-            'user'     => "ALTER ROLE \"{$config['oldUsername']}\" RENAME TO \"{$config['username']}\"",
-            'password' => "ALTER ROLE \"{$config['username']}\" WITH PASSWORD '{$config['password']}'",
-            'database' => "CREATE DATABASE \"{$config['database']}\" OWNER \"{$config['username']}\"",
-            'grant'    => "GRANT ALL PRIVILEGES ON DATABASE \"{$config['database']}\" TO \"{$config['username']}\"",
-        ], $tableStatements);
+                foreach ($tables as $table) {
+                    $this->statement("ALTER TABLE \"{$config['oldUsername']}\".\"{$table}\" SET SCHEMA \"{$config['database']}\"");
+                }
 
-        // Add database drop statement as last statement
-        $statements['delete-db'] =  "DROP DATABASE IF EXISTS \"{$config['oldUsername']}\"";
+                // Add database drop statement as last statement
+                $this->statement("DROP DATABASE \"{$config['oldUsername']}\"");
+            })
+            ->getStatus();
 
-        return $this->processAndDispatch(Events\Updated::class, $tenant, $statements);
+        event(new Events\Updated($tenant, $this, $result));
+
+        return $result;
     }
 
     public function delete(Tenant $tenant): bool
@@ -85,10 +107,16 @@ class Pgsql implements ProvidesDatabase
 
         event(new Events\Deleting($tenant, $config, $this));
 
-        return $this->processAndDispatch(Events\Deleted::class, $tenant, [
-            'user'     => "DROP ROLE IF EXISTS \"{$config['username']}\"",
-            'database' => "DROP DATABASE IF EXISTS \"{$config['database']}\"",
-        ]);
+        $result = $this->queryManager->setConnection($this->system($tenant))
+            ->process(function () use ($config) {
+                $this->statement("DROP ROLE IF EXISTS \"{$config['username']}\"");
+                $this->statement("DROP DATABASE IF EXISTS \"{$config['database']}\"");
+            })
+            ->getStatus();
+
+        event(new Events\Deleted($tenant, $this, $result));
+
+        return $result;
     }
 
     protected function system(Tenant $tenant): ConnectionInterface
@@ -100,31 +128,6 @@ class Pgsql implements ProvidesDatabase
         }
 
         return DB::connection($connection);
-    }
-
-    protected function process(Tenant $tenant, array $statements): bool
-    {
-        $success = false;
-
-        $this->system($tenant)->beginTransaction();
-
-        foreach ($statements as $statement) {
-            try {
-                $success = $this->system($tenant)->statement($statement);
-                // @codeCoverageIgnoreStart
-            } catch (QueryException $e) {
-                $this->system($tenant)->rollBack();
-                // @codeCoverageIgnoreEnd
-            } finally {
-                if (!$success) {
-                    throw $e;
-                }
-            }
-        }
-
-        $this->system($tenant)->commit();
-
-        return $success;
     }
 
     /**
@@ -141,28 +144,22 @@ class Pgsql implements ProvidesDatabase
         $resolver = resolve(ResolvesConnections::class);
         $resolver($tempTenant, Tenancy::getTenantConnectionName());
 
-        $tables = Tenancy::getTenantConnection()->getSchemaBuilder()->getTableListing();
+        $tables = [];
+
+        // @codeCoverageIgnoreStart
+        if (method_exists(Tenancy::getTenantConnection(), 'getDoctrineSchemaManager')) {
+            $tables = Tenancy::getTenantConnection()->getDoctrineSchemaManager()->listTableNames();
+        } else {
+            $schemaData = Tenancy::getTenantConnection()->getSchemaBuilder()->getTables();
+
+            $tables = array_map(function ($tableData) {
+                return $tableData['name'];
+            }, $schemaData);
+        }
+        // @codeCoverageIgnoreEnd
 
         $resolver(null, Tenancy::getTenantConnectionName());
 
         return $tables;
-    }
-
-    /**
-     * Processes the provided statements and dispatches an event.
-     *
-     * @param string $event
-     * @param Tenant $tenant
-     * @param array  $statements
-     *
-     * @return bool
-     */
-    private function processAndDispatch(string $event, Tenant $tenant, array $statements): bool
-    {
-        $result = $this->process($tenant, $statements);
-
-        event((new $event($tenant, $this, $result)));
-
-        return $result;
     }
 }
