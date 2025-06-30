@@ -1,3 +1,5 @@
+> Warning: This package is currently in the development phase and has not been fully tested. It will be tested alongside my own project and a stable version will be released.
+
 ## About
 tenancy/tenancy pgsql database connection driver. The package has been created by modifying the official MySQL driver and works on Laravel 11+ (the Doctrine/DBAL dependency has been removed).
 
