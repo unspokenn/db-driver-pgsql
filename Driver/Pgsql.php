@@ -57,7 +57,7 @@ class Pgsql implements ProvidesDatabase
 
         $result = $this->queryManager->setConnection($this->system($tenant))
             ->process(function () use ($config) {
-                $this->statement("CREATE ROLE IF NOT EXISTS \"{$config['username']}\" WITH LOGIN PASSWORD '{$config['password']}'");
+                $this->statement("CREATE ROLE \"{$config['username']}\" WITH CREATEDB LOGIN PASSWORD '{$config['password']}'");
                 $this->statement("CREATE DATABASE \"{$config['database']}\" OWNER \"{$config['username']}\"");
                 $this->statement("GRANT ALL PRIVILEGES ON DATABASE \"{$config['database']}\" TO \"{$config['username']}\"");
             })
