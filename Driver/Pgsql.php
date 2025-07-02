@@ -20,9 +20,7 @@ use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\DB;
-use Tenancy\Affects\Connections\Contracts\ResolvesConnections;
 use Tenancy\Database\Drivers\Pgsql\Concerns\ManagesSystemConnection;
-use Tenancy\Facades\Tenancy;
 use Tenancy\Hooks\Database\Contracts\ProvidesDatabase;
 use Tenancy\Hooks\Database\Events\Drivers as Events;
 use Tenancy\Hooks\Database\Support\QueryManager;
@@ -78,21 +76,13 @@ class Pgsql implements ProvidesDatabase
             return false;
         }
 
-        $tables = $this->retrieveTables($tenant);
-
         $result = $this->queryManager->setConnection($this->system($tenant))
-            ->process(function () use ($config, $tables) {
+            ->process(function () use ($config) {
                 $this->statement("ALTER ROLE \"{$config['oldUsername']}\" RENAME TO \"{$config['username']}\"");
                 $this->statement("ALTER ROLE \"{$config['username']}\" WITH PASSWORD '{$config['password']}'");
-                $this->statement("CREATE DATABASE \"{$config['database']}\" OWNER \"{$config['username']}\"");
+                $this->statement("ALTER DATABASE \"{$config['oldUsername']}\" RENAME TO \"{$config['database']}\"");
+                $this->statement("ALTER DATABASE \"{$config['database']}\" OWNER TO \"{$config['username']}\"");
                 $this->statement("GRANT ALL PRIVILEGES ON DATABASE \"{$config['database']}\" TO \"{$config['username']}\"");
-
-                foreach ($tables as $table) {
-                    $this->statement("ALTER TABLE \"{$config['oldUsername']}\".\"{$table}\" SET SCHEMA \"{$config['database']}\"");
-                }
-
-                // Add database drop statement as last statement
-                $this->statement("DROP DATABASE \"{$config['oldUsername']}\"");
             })
             ->getStatus();
 
@@ -128,38 +118,5 @@ class Pgsql implements ProvidesDatabase
         }
 
         return DB::connection($connection);
-    }
-
-    /**
-     * @param Tenant $tenant
-     *
-     * @return array
-     */
-    protected function retrieveTables(Tenant $tenant): array
-    {
-        $tempTenant = $tenant->replicate();
-        $tempTenant->{$tenant->getTenantKeyName()} = $tenant->getOriginal($tenant->getTenantKeyName());
-
-        /** @var ResolvesConnections $resolver */
-        $resolver = resolve(ResolvesConnections::class);
-        $resolver($tempTenant, Tenancy::getTenantConnectionName());
-
-        $tables = [];
-
-        // @codeCoverageIgnoreStart
-        if (method_exists(Tenancy::getTenantConnection(), 'getDoctrineSchemaManager')) {
-            $tables = Tenancy::getTenantConnection()->getDoctrineSchemaManager()->listTableNames();
-        } else {
-            $schemaData = Tenancy::getTenantConnection()->getSchemaBuilder()->getTables();
-
-            $tables = array_map(function ($tableData) {
-                return $tableData['name'];
-            }, $schemaData);
-        }
-        // @codeCoverageIgnoreEnd
-
-        $resolver(null, Tenancy::getTenantConnectionName());
-
-        return $tables;
     }
 }
