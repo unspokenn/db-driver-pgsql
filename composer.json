@@ -1,6 +1,6 @@
 {
     "name": "unspokenn/db-driver-pgsql",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "description": "The tenancy/tenancy database driver for Pgsql",
     "keywords": ["database", "tenancy", "postgresql", "pgsql"],
     "license": "MIT",

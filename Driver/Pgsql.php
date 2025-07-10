@@ -55,6 +55,7 @@ class Pgsql implements ProvidesDatabase
 
         $result = $this->queryManager->setConnection($this->system($tenant))
             ->process(function () use ($config) {
+                /** @var QueryManager $this */
                 $this->statement("CREATE ROLE \"{$config['username']}\" WITH LOGIN PASSWORD '{$config['password']}'");
                 $this->statement("CREATE DATABASE \"{$config['database']}\" OWNER \"{$config['username']}\"");
                 $this->statement("GRANT ALL PRIVILEGES ON DATABASE \"{$config['database']}\" TO \"{$config['username']}\"");
@@ -78,6 +79,7 @@ class Pgsql implements ProvidesDatabase
 
         $result = $this->queryManager->setConnection($this->system($tenant))
             ->process(function () use ($config) {
+                /** @var QueryManager $this */
                 $this->statement("ALTER ROLE \"{$config['oldUsername']}\" RENAME TO \"{$config['username']}\"");
                 $this->statement("ALTER ROLE \"{$config['username']}\" WITH PASSWORD '{$config['password']}'");
                 $this->statement("ALTER DATABASE \"{$config['oldUsername']}\" RENAME TO \"{$config['database']}\"");
@@ -99,6 +101,7 @@ class Pgsql implements ProvidesDatabase
 
         $result = $this->queryManager->setConnection($this->system($tenant))
             ->process(function () use ($config) {
+                /** @var QueryManager $this */
                 $this->statement("DROP ROLE IF EXISTS \"{$config['username']}\"");
                 $this->statement("DROP DATABASE IF EXISTS \"{$config['database']}\"");
             })
@@ -114,6 +117,7 @@ class Pgsql implements ProvidesDatabase
         $connection = null;
 
         if (in_array(ManagesSystemConnection::class, class_implements($tenant))) {
+            /** @var ManagesSystemConnection $tenant */
             $connection = $tenant->getManagingSystemConnection() ?? $connection;
         }
 
